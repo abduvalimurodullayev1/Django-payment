@@ -3,50 +3,44 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.payment.click.Complete.serializers import ClickCompleteSerializer
 from apps.payment.click.auth import authentication
 from apps.payment.click.client import ClickUPClient
 from apps.payment.models import Transaction, Providers
+from apps.payment.click.Prepare.serializers import ClickPrepareSerializer
 
 
-class ClickCompleteAPIView(APIView):
-    TYPE = "complete"
+class ClickPrepareAPIView(APIView):
+    TYPE = "prepare"
     PROVIDER = Providers.ProviderChoices.CLICK
     permission_classes = []
 
-    @swagger_auto_schema(request_body=ClickCompleteSerializer)
+    @swagger_auto_schema(request_body=ClickPrepareSerializer)
     def post(self, request, *args, **kwargs):
-        check_auth = authentication(request)
 
-        if not check_auth:
+        is_authenticated = authentication(request)
+        if not is_authenticated:
             return Response({"error": "-1", "error_note": "Authentication failed"})
 
-        serializer = ClickCompleteSerializer(data=request.data, many=False)
+        serializer = ClickPrepareSerializer(data=request.data)
+
         serializer.is_valid(raise_exception=True)
 
         with db_transaction.atomic():
-            click_provider = ClickUPClient(serializer.validated_data)
-            response = click_provider.complete()
+            click_up_client = ClickUPClient(serializer.validated_data)
+            response = click_up_client.prepare()
+        
 
-        response["fiscal_items"] = list()
-
-        if click_provider.has_transaction:
-            transaction = click_provider.transaction
+        if click_up_client.has_transaction:
+            transaction = click_up_client.transaction
         else:
             transaction = None
-
+        
         response["click_trans_id"] = serializer.validated_data.get("click_trans_id", None)
         response["merchant_trans_id"] = serializer.validated_data.get("merchant_trans_id", None)
-        response["merchant_prepare_id"] = serializer.validated_data.get("merchant_prepare_id", None)
-        response["merchant_confirm_id"] = serializer.validated_data.get("merchant_prepare_id", None)
 
         if response["error"] == "0":
-            transaction = click_provider.transaction
-
-            with db_transaction.atomic():
-                transaction.apply_transaction(
-                    provider=Providers.ProviderChoices.CLICK
-                )
+            transaction = click_up_client.transaction
+            response["merchant_prepare_id"] = transaction.id
             return Response(response)
 
         if transaction and transaction.status == Transaction.StatusType.PENDING:
@@ -56,4 +50,4 @@ class ClickCompleteAPIView(APIView):
         return Response(response)
 
 
-__all__ = ['ClickCompleteAPIView']
+__all__ = ['ClickPrepareAPIView']
